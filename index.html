@@ -69,6 +69,8 @@ svg.leaflet-zoom-animated { will-change: transform; }
 .tiles-sat { filter: brightness(72%) saturate(65%) contrast(105%); }
 .leaflet-container.tool-draw, .leaflet-container.tool-draw .leaflet-interactive { cursor: crosshair; }
 .leaflet-container.tool-flag { cursor: cell; }
+.leaflet-container.tool-hand { cursor: grab; }
+.leaflet-container.tool-hand.leaflet-drag-target { cursor: grabbing; }
  
 #root { width: 100%; height: 100%; }
 .app { position: relative; width: 100%; height: 100%; min-height: 320px; overflow: hidden; background: var(--bg); }
@@ -1318,6 +1320,7 @@ input[type="range"]::-moz-range-thumb { width: 10px; height: 14px; background: v
   }
  
   var TOOLS = [
+    { id: 'hand', label: 'Рука', icon: '<path d="M18 11V6a2 2 0 0 0-4 0"/><path d="M14 10V4a2 2 0 0 0-4 0v2"/><path d="M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-6-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>' },
     { id: 'brush', label: 'Кисть', icon: '<path d="M3 21c2.5 0 4-1 4.8-3.2L18.5 7.1a2 2 0 0 0-2.8-2.8L5 15c-1.6.7-2 2.4-2 6z"/>' },
     { id: 'zone', label: 'Контур', icon: '<path d="M4 9l6-5 9 3 2 9-8 5-8-3z" stroke-dasharray="3 3"/>' },
     { id: 'ruler', label: 'Линейка', icon: '<path d="M3 17 17 3l4 4L7 21z"/><path d="m7 13 2 2M10 10l2 2M13 7l2 2"/>' },
@@ -1325,6 +1328,7 @@ input[type="range"]::-moz-range-thumb { width: 10px; height: 14px; background: v
   ];
   var LAYERS = [['map', 'Карта'], ['sat', 'Спутник'], ['hybrid', 'Гибрид'], ['grid', 'Сетка']];
   var HINTS = {
+    hand: 'Перетаскивайте карту зажатой кнопкой, колесо мыши или кнопки +/− меняют масштаб. Рисунки, флаги и замеры остаются на месте.',
     brush: 'Зажмите кнопку и ведите по карте. Рисовать можно только внутри оливковой границы.',
     zone: 'Зажмите кнопку и обведите область. Линия сама замкнётся прямой от конца к началу, и закрасится только то, что внутри обведённой петли. Часть за границей Украины отсекается.',
     ruler: 'Клик задаёт точку А, второй клик задаёт точку Б. Точки вне оливковой границы игнорируются. Esc или правая кнопка отменяют измерение.',
@@ -1710,6 +1714,7 @@ input[type="range"]::-moz-range-thumb { width: 10px; height: 14px; background: v
       else { map.dragging.enable(); map.boxZoom.enable(); }
       el.classList.toggle('tool-draw', drawing || tool === 'ruler');
       el.classList.toggle('tool-flag', tool === 'flag');
+      el.classList.toggle('tool-hand', tool === 'hand');
  
       var act = null;
       var dotStyle = { radius: 3.5, color: '#0a0a0a', weight: 1, fillColor: '#e5e7eb', fillOpacity: 1, interactive: false, pane: 'shadowPane' };
@@ -1833,7 +1838,23 @@ input[type="range"]::-moz-range-thumb { width: 10px; height: 14px; background: v
           var r = s.ruler, b = e.latlng;
           updateRuler(r, b);
           var dotB = L.circleMarker(b, dotStyle).addTo(map);
-          s.rulers.push({ layers: r.layers.concat([dotB]) });
+          var item = { layers: r.layers.concat([dotB]) };
+          /* невидимая широкая линия-мишень, чтобы по тонкой пунктирной линии было легко попасть двойным кликом */
+          var hit = L.polyline([r.a, b], { color: '#000', weight: 18, opacity: 0, interactive: true, bubblingMouseEvents: false, pane: 'shadowPane' }).addTo(map);
+          item.layers.push(hit);
+          var delRuler = function () {
+            item.layers.forEach(function (l) { map.removeLayer(l); });
+            s.rulers = s.rulers.filter(function (x) { return x !== item; });
+            sync();
+          };
+          hit.on('dblclick', function (ev) { L.DomEvent.stop(ev); delRuler(); });
+          var tipEl = r.tip.getElement();
+          if (tipEl) {
+            tipEl.style.pointerEvents = 'auto'; tipEl.style.cursor = 'pointer';
+            L.DomEvent.disableClickPropagation(tipEl);
+            L.DomEvent.on(tipEl, 'dblclick', function (ev) { L.DomEvent.stop(ev); delRuler(); });
+          }
+          s.rulers.push(item);
           s.ruler = null;
           sync();
         }
@@ -1861,7 +1882,6 @@ input[type="range"]::-moz-range-thumb { width: 10px; height: 14px; background: v
         map.off('contextmenu', onCtx);
         window.removeEventListener('keydown', onKey);
         if (act && act.preview) map.removeLayer(act.preview);
-        cancelRuler();
       };
     }, [tool]);
  
